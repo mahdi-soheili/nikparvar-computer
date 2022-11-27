@@ -45,3 +45,98 @@ char_indices = dict((c, i) for i, c in enumerate(chars))
 indices_char = dict((i, c) for i, c in enumerate(chars))
 ```
 ![](https://files.virgool.io/upload/users/1223901/posts/rynq4emx1qcx/5378m1t6nquv.jpeg)
+
+پس با توجه به تصویر بالا، input ها یک ایندکس از آخر عقب تر از target ها هستند و target ها نیز یک ایندکس از اول جلوتر از input ها هستند، پس به این شیوه متغییر های x و y رو میسازیم:
+```
+maxlen = 40
+step = 3
+sentences = []
+next_chars = []
+for i in range(0, len(text) - maxlen, step):
+    sentences.append(text[i : i + maxlen])
+    next_chars.append(text[i + maxlen])
+x = np.zeros((len(sentences), maxlen, len(chars)), dtype=np.bool)
+y = np.zeros((len(sentences), len(chars)), dtype=np.bool)
+for i, sentence in enumerate(sentences):
+    for t, char in enumerate(sentence):
+        x[i, t, char_indices[char]] = 1
+    y[i, char_indices[next_chars[i]]] = 1
+```
+# مدل سازی
+
+حالا میتوانیم مدل LSTM خود را تعریف کنیم. در اینجا از یک لایه LSTM با 128 واحد حافظه به عنوان حافظه پنهان و لایه خروجی یک Dense layer هست که از تابع softmax استفاده میکند، برای بهینه ساز هم از Adam استفاده میکنیم :
+```
+model = keras.Sequential(
+    [
+        keras.Input(shape=(maxlen, len(chars))),
+        layers.LSTM(128),
+        layers.Dense(len(chars), activation=&quotsoftmax&quot),
+    ]
+)
+optimizer = optimizers.Adam(learning_rate=0.01)
+model.compile(loss=&quotcategorical_crossentropy&quot, optimizer=optimizer)
+```
+به دلیل اینکه مدل برای پیش‌بینی کارکتر بعدی، احتمال هر کارکتر را برمیگرداند، یک تابع برای text sampling نیاز خواهیم داشت :
+
+```
+def sample(preds, temperature=1.0):
+    # helper function to sample an index from a probability array
+    preds = np.asarray(preds).astype(&quotfloat64&quot)
+    preds = np.log(preds) / temperature
+    exp_preds = np.exp(preds)
+    preds = exp_preds / np.sum(exp_preds)
+    probas = np.random.multinomial(1, preds, 1)
+    return np.argmax(probas)
+```
+
+
+و در آخر آموزش مدل را آموزش میدهیم :
+
+
+```
+epochs = 40
+batch_size = 128
+
+model.fit(x, y, batch_size=batch_size, epochs=40)
+```
+آموزش مدل روی NVIDIA Tesla K50 حدود دو دقیقه طول کشید. حالا میتوانیم مدل را تست کنیم :
+
+```
+for i in range(10):
+    start_index = random.randint(0, len(text) - maxlen - 1)
+    for diversity in [0.2, 0.5, 1.0, 1.2]:
+        print(&quot...Diversity:&quot, diversity)
+
+        generated = &quot&quot
+        sentence = text[start_index : start_index + maxlen]
+        print('...Generating with seed: &quot' + sentence + '&quot')
+
+        for i in range(400):
+            x_pred = np.zeros((1, maxlen, len(chars)))
+            for t, char in enumerate(sentence):
+                x_pred[0, t, char_indices[char]] = 1.0
+            preds = model.predict(x_pred, verbose=0)[0]
+            next_index = sample(preds, diversity)
+            next_char = indices_char[next_index]
+            sentence = sentence[1:] + next_char
+            generated += next_char
+
+        print(&quot...Generated: &quot, generated)
+        print()
+ ```
+ 
+ 
+با اجرای کد، ده متن با diversity های مختلف تولید میشود :
+
+
+![](https://files.virgool.io/upload/users/1223901/posts/rynq4emx1qcx/plrkjthnkq7a.png)
+
+متن ورودی به صورت تصادفی از خود متن اصلی انتخاب میشود اما شما میتوانید متن خود را به مدل بدهید.
+
+
+
+
+# بررسی اشعار تولید شده
+
+>به خاک نشینی که بر سر خود از در آن چه اند
+>گر چه ما به دست است و دل بر این خواهد شد
